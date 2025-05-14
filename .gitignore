@@ -1,0 +1,25 @@
+# Compiled executable
+qualia
+*.exe # if building for Windows
+
+# Object files, archives, and libraries
+*.[oa]
+
+# Test binaries
+*_test
+
+# Profiling data
+*.prof
+
+# OS-specific files
+.DS_Store
+Thumbs.db
+
+# IDE / Editor specific
+.vscode/
+.idea/
+*.swp
+*~
+
+# Go Module vendoring directory (if you decide to use it and not commit it)
+# vendor/
