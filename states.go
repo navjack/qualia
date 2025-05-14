@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math/rand"
 	"strconv"
+	"strings"
 )
 
 // MindContext holds the internal state of an entity's mind.
@@ -253,7 +254,7 @@ func (s *ActingState) GetPrompt(entity *Entity) string {
 	} else {
 		prompt += " | Focus: None"
 	}
-	prompt += " | Commands: [express | idle | view | quit]"
+	prompt += " | Commands: [express | evolve <param> <dir> | idle | view | quit]"
 	return prompt
 }
 
@@ -261,7 +262,15 @@ func (s *ActingState) HandleInput(entityID string, ctx *MindContext, parts []str
 	command := parts[0]
 	var events []string
 
-	if ctx.Energy < 20 && command == "express" {
+	// Define constants for evolution parameters
+	const HighClarityForEvolve = 0.95
+	const EnergyCostEvolve = 50
+	const MaxEnergyEvolveAmount = 10
+	const ThresholdEvolveAmount = 0.05
+	const MinExpressionThreshold = 0.1
+	const MaxExpressionThreshold = 0.95 // Can't evolve to be trivially easy or impossible
+
+	if ctx.Energy < 20 && command == "express" { // Specific energy check for express
 		fmt.Println("Not enough energy to express. Try 'idle' then 'recharge'.")
 		events = append(events, fmt.Sprintf("%s has low energy for expressing thoughts.", entityID))
 		return s, events
@@ -279,22 +288,100 @@ func (s *ActingState) HandleInput(entityID string, ctx *MindContext, parts []str
 			msg := fmt.Sprintf("FAILED TO EXPRESS: '%s'. Clarity %.2f is below threshold %.2f.", focusedThought, ctx.Clarity, ctx.ExpressionThreshold)
 			events = append(events, fmt.Sprintf("%s %s", entityID, msg))
 			fmt.Printf("%s Energy: %d\n", msg, ctx.Energy)
-			// No energy cost for failed expression due to low clarity
 			break
 		}
 
-		if ctx.Energy >= 20 {
+		if ctx.Energy >= 20 { // Standard express cost
 			ctx.Energy -= 20
 			msg := fmt.Sprintf("SUCCESSFULLY EXPRESSED: '%s'!", focusedThought)
 			events = append(events, fmt.Sprintf("%s %s", entityID, msg))
 			fmt.Printf("%s Clarity was %.2f. Energy: %d\n", msg, ctx.Clarity, ctx.Energy)
 
-			// Reset focus and clarity after successful expression
+			ctx.Thoughts = append(ctx.Thoughts[:ctx.CurrentFocusIndex], ctx.Thoughts[ctx.CurrentFocusIndex+1:]...)
 			ctx.CurrentFocusIndex = -1
 			ctx.Clarity = 0
 		} else {
 			events = append(events, fmt.Sprintf("%s failed to express '%s' (low energy).", entityID, focusedThought))
 			fmt.Println("Not enough energy to express the thought.")
+		}
+
+	case "evolve":
+		if len(parts) < 3 {
+			msg := "Usage: evolve <parameter> <direction> (e.g., evolve max_energy increase)"
+			fmt.Println(msg)
+			events = append(events, fmt.Sprintf("%s evolution command failed: %s", entityID, msg))
+			break
+		}
+		parameter := strings.ToLower(parts[1])
+		direction := strings.ToLower(parts[2])
+
+		if ctx.CurrentFocusIndex == -1 {
+			msg := "Cannot evolve without a deeply focused thought."
+			fmt.Println(msg)
+			events = append(events, fmt.Sprintf("%s evolution failed: %s", entityID, msg))
+			break
+		}
+		if ctx.Clarity < HighClarityForEvolve {
+			msg := fmt.Sprintf("Clarity of focused thought '%.2f' is not high enough (%.2f required) to evolve.", ctx.Clarity, HighClarityForEvolve)
+			fmt.Println(msg)
+			events = append(events, fmt.Sprintf("%s evolution failed: %s", entityID, msg))
+			break
+		}
+		if ctx.Energy < EnergyCostEvolve {
+			msg := fmt.Sprintf("Not enough energy (%d required) to evolve.", EnergyCostEvolve)
+			fmt.Println(msg)
+			events = append(events, fmt.Sprintf("%s evolution failed: %s Energy %d/%d", entityID, msg, ctx.Energy, EnergyCostEvolve))
+			break
+		}
+
+		// All conditions met, proceed with evolution
+		ctx.Energy -= EnergyCostEvolve
+		originalThought := ctx.Thoughts[ctx.CurrentFocusIndex]
+		evolved := false
+
+		switch parameter {
+		case "max_energy":
+			if direction == "increase" {
+				oldVal := ctx.MaxEnergy
+				ctx.MaxEnergy += MaxEnergyEvolveAmount
+				events = append(events, fmt.Sprintf("%s EVOLVED: MaxEnergy increased from %d to %d. Consumed thought: '%s'.", entityID, oldVal, ctx.MaxEnergy, originalThought))
+				evolved = true
+			} else {
+				events = append(events, fmt.Sprintf("%s evolution failed: Invalid direction '%s' for parameter '%s'.", entityID, direction, parameter))
+			}
+		case "threshold":
+			oldVal := ctx.ExpressionThreshold
+			if direction == "decrease" {
+				ctx.ExpressionThreshold -= ThresholdEvolveAmount
+				if ctx.ExpressionThreshold < MinExpressionThreshold {
+					ctx.ExpressionThreshold = MinExpressionThreshold
+				}
+				events = append(events, fmt.Sprintf("%s EVOLVED: ExpressionThreshold decreased from %.2f to %.2f. Consumed thought: '%s'.", entityID, oldVal, ctx.ExpressionThreshold, originalThought))
+				evolved = true
+			} else if direction == "increase" {
+				ctx.ExpressionThreshold += ThresholdEvolveAmount
+				if ctx.ExpressionThreshold > MaxExpressionThreshold {
+					ctx.ExpressionThreshold = MaxExpressionThreshold
+				}
+				events = append(events, fmt.Sprintf("%s EVOLVED: ExpressionThreshold increased from %.2f to %.2f. Consumed thought: '%s'.", entityID, oldVal, ctx.ExpressionThreshold, originalThought))
+				evolved = true
+			} else {
+				events = append(events, fmt.Sprintf("%s evolution failed: Invalid direction '%s' for parameter '%s'.", entityID, direction, parameter))
+			}
+		default:
+			events = append(events, fmt.Sprintf("%s evolution failed: Unknown parameter '%s'.", entityID, parameter))
+		}
+
+		if evolved {
+			// Consume thought and reset focus
+			ctx.Thoughts = append(ctx.Thoughts[:ctx.CurrentFocusIndex], ctx.Thoughts[ctx.CurrentFocusIndex+1:]...)
+			ctx.CurrentFocusIndex = -1
+			ctx.Clarity = 0
+			fmt.Printf("Entity %s successfully evolved. Energy: %d\n", entityID, ctx.Energy)
+		} else {
+			// Refund energy if evolution attempt failed due to bad params but passed initial checks
+			ctx.Energy += EnergyCostEvolve
+			fmt.Printf("Entity %s evolution attempt failed due to invalid parameters. Energy refunded.\n", entityID)
 		}
 
 	case "idle":
