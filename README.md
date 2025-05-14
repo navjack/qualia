@@ -28,6 +28,34 @@ Each entity in the simulation possesses its own `MindContext`:
     *   A log of recent significant events (e.g., thought generation, state changes, actions taken).
 *   **Enhanced Event Logging**: The system logs more detailed events, offering better insight into the internal workings and interactions of the entities.
 
+## Autopilot Dashboard Preview
+
+When `autopilot` mode is enabled for the player, the terminal displays a global dashboard that updates in real-time. Here's an example of what it looks like:
+
+```text
+====== Qualia Simulation Dashboard (Observer Mode) ======
+Current Time: 20:39:13 | Player Autopilot: ENABLED
+------------------------------------------------------------
+| Player-1   (Player) | State: Idle         
+| Energy:  70/100 [■■■■■■■■■■■■■■------] | Thoughts:  0 
+| Focus:  'None'                    | Clarity: ---  [--------------------] 
+------------------------------------------------------------
+| AI-Alpha   (AI    ) | State: Thinking     
+| Energy:  55/100 [■■■■■■■■■■■---------] | Thoughts:  1 
+| Focus:  'None'                    | Clarity: ---  [--------------------] 
+------------------------------------------------------------
+
+Recent Events:
+  [20:39:13] AI-Alpha generated thought: 'consciousness is a complex phenomenon'.
+  [20:39:13] Player-1 transitioned to Idle from Acting.
+  [20:39:12] AI-Alpha started thinking.
+  [20:39:12] Player-1 prepared to act.
+  [20:39:11] AI AI-Alpha decides to do nothing this turn.
+  [20:39:10] AI-Alpha transitioned to Idle from Acting.
+  [20:39:09] AI-Alpha prepared to act.
+===========================================================
+```
+
 ## How to Run
 
 1.  Ensure you have Go installed on your machine.
