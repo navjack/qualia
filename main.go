@@ -2,7 +2,9 @@ package main
 
 import (
 	"bufio"
+	"encoding/json"
 	"fmt"
+	"io/ioutil"
 	"math/rand"
 	"os"
 	"strings"
@@ -167,13 +169,120 @@ func selectAIAction(entity *Entity) []string {
 			commandParts = []string{"idle"}
 		}
 	case *ActingState:
-		if entity.Mind.CurrentFocusIndex != -1 && entity.Mind.Energy > 25 && entity.Mind.Clarity >= entity.Mind.ExpressionThreshold && rand.Intn(2) == 0 {
-			commandParts = []string{"express"}
-		} else {
-			commandParts = []string{"idle"}
+		// Constants for AI evolution decision (mirroring states.go for now)
+		const HighClarityForEvolve = 0.95
+		const EnergyCostEvolve = 50
+		const MinExpressionThresholdForAIDecrease = 0.20 // AI won't try to decrease if already very low
+		const MaxEnergySoftCapForAI = 150                // AI prioritizes evolving MaxEnergy if below this
+
+		// Attempt to Evolve first if conditions are met
+		if entity.Mind.CurrentFocusIndex != -1 &&
+			entity.Mind.Clarity >= HighClarityForEvolve &&
+			entity.Mind.Energy >= EnergyCostEvolve {
+
+			if entity.Mind.MaxEnergy < MaxEnergySoftCapForAI {
+				commandParts = []string{"evolve", "max_energy", "increase"}
+			} else if entity.Mind.ExpressionThreshold > MinExpressionThresholdForAIDecrease {
+				commandParts = []string{"evolve", "threshold", "decrease"}
+			}
+		}
+
+		// If AI didn't choose to evolve, consider expressing or idling
+		if len(commandParts) == 0 {
+			if entity.Mind.CurrentFocusIndex != -1 && entity.Mind.Energy > 25 && entity.Mind.Clarity >= entity.Mind.ExpressionThreshold && rand.Intn(2) == 0 {
+				commandParts = []string{"express"}
+			} else {
+				commandParts = []string{"idle"}
+			}
 		}
 	}
 	return commandParts
+}
+
+// SerializableEntityState represents an entity's state for serialization.
+type SerializableEntityState struct {
+	ID                  string       `json:"id"`
+	IsPlayer            bool         `json:"is_player"`
+	Mind                *MindContext `json:"mind"` // MindContext is from states.go but used here
+	CurrentFSMStateName string       `json:"current_fsm_state_name"`
+}
+
+// SimulationState represents the simulation state for serialization.
+type SimulationState struct {
+	Entities         []SerializableEntityState `json:"entities"`
+	EventLog         []string                  `json:"event_log"`
+	AutoPilotEnabled bool                      `json:"auto_pilot_enabled"`
+	// Potentially add RNG state if deep determinism is needed, for now skipping.
+}
+
+// getStateByName converts a state name string to a State interface instance.
+// This is crucial for restoring FSM states during loading.
+func getStateByName(name string) State {
+	switch name {
+	case "Idle":
+		return &IdleState{}
+	case "Thinking":
+		return &ThinkingState{}
+	case "Reflecting":
+		return &ReflectingState{}
+	case "Acting":
+		return &ActingState{}
+	default:
+		fmt.Printf("Warning: Unknown state name '%s' during load. Defaulting to IdleState.\n", name)
+		return &IdleState{} // Fallback, should ideally not happen with valid save files
+	}
+}
+
+// saveGame saves the current simulation state to a file.
+func saveGame(filename string, entities []*Entity, currentEventLog []string, autopilot bool) error {
+	simulationState := SimulationState{
+		Entities:         make([]SerializableEntityState, len(entities)),
+		EventLog:         currentEventLog,
+		AutoPilotEnabled: autopilot,
+	}
+
+	for i, entity := range entities {
+		simulationState.Entities[i] = SerializableEntityState{
+			ID:                  entity.ID,
+			IsPlayer:            entity.IsPlayer,
+			Mind:                entity.Mind, // Revert to direct assignment
+			CurrentFSMStateName: entity.CurrentFSMState.GetName(),
+		}
+	}
+
+	data, err := json.MarshalIndent(simulationState, "", "  ")
+	if err != nil {
+		return err
+	}
+
+	return ioutil.WriteFile(filename, data, 0644)
+}
+
+// loadGame loads the simulation state from a file.
+// It returns the loaded entities, event log, autopilot status, and any error encountered.
+func loadGame(filename string) ([]*Entity, []string, bool, error) {
+	data, err := ioutil.ReadFile(filename)
+	if err != nil {
+		return nil, nil, false, err
+	}
+
+	var simulationState SimulationState
+	err = json.Unmarshal(data, &simulationState)
+	if err != nil {
+		return nil, nil, false, err
+	}
+
+	entities := make([]*Entity, len(simulationState.Entities))
+	for i, entityState := range simulationState.Entities {
+		entities[i] = &Entity{
+			ID:              entityState.ID,
+			IsPlayer:        entityState.IsPlayer,
+			Mind:            entityState.Mind, // Revert to direct assignment
+			CurrentFSMState: getStateByName(entityState.CurrentFSMStateName),
+		}
+	}
+
+	return entities, simulationState.EventLog, simulationState.AutoPilotEnabled, nil
 }
 
 func main() {
@@ -199,6 +308,8 @@ func main() {
 	fmt.Println("Mind Simulation MVP - Endless Mode with Entities")
 	fmt.Println("Type 'quit' to exit.")
 	fmt.Println("Type 'autopilot' to toggle player's automatic mode.")
+	fmt.Println("Type 'save <filename.json>' to save the game.")
+	fmt.Println("Type 'load <filename.json>' to load the game.")
 
 	for {
 		for _, currentEntity := range entities {
@@ -253,6 +364,56 @@ func main() {
 						fmt.Println("Player autopilot ENABLED.")
 					} else {
 						fmt.Println("Player autopilot DISABLED.")
+					}
+					continue
+				}
+
+				if command == "save" {
+					if len(parts) < 2 {
+						fmt.Println("Usage: save <filename.json>")
+						continue
+					}
+					filename := parts[1]
+					if err := saveGame(filename, entities, eventLog, autoPilotEnabled); err != nil {
+						fmt.Printf("Error saving game: %v\n", err)
+					} else {
+						fmt.Printf("Game saved to %s\n", filename)
+						addEventToLog(fmt.Sprintf("Game state saved to %s by %s", filename, currentEntity.ID))
+					}
+					continue
+				}
+
+				if command == "load" {
+					if len(parts) < 2 {
+						fmt.Println("Usage: load <filename.json>")
+						continue
+					}
+					filename := parts[1]
+					loadedEntities, loadedEventLog, loadedAutopilot, err := loadGame(filename)
+					if err != nil {
+						fmt.Printf("Error loading game: %v\n", err)
+					} else {
+						entities = loadedEntities
+						// Need to re-assign player and aiEntity pointers if they are used directly elsewhere
+						// For now, assuming entities slice is the source of truth.
+						for _, e := range entities {
+							if e.IsPlayer {
+								player = e // Update main player reference
+								break
+							}
+						}
+						// Similarly update aiEntity if needed, or just iterate entities directly.
+
+						eventLog = loadedEventLog
+						autoPilotEnabled = loadedAutopilot
+						fmt.Printf("Game loaded from %s\n", filename)
+						addEventToLog(fmt.Sprintf("Game state loaded from %s by %s", filename, currentEntity.ID)) // activeEntity might be stale here if player changed
+						// Force a dashboard render or prompt after load
+						if autoPilotEnabled {
+							renderGlobalDashboard(entities)
+						} else {
+							fmt.Print(player.CurrentFSMState.GetPrompt(player) + " > ")
+						}
 					}
 					continue
 				}
